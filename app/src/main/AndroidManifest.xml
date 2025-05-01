@@ -3,10 +3,12 @@
     package="com.example.protectalk">
 
     <!-- Permissions -->
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
     <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.READ_PHONE_STATE"/>
     <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
 
     <application
         android:allowBackup="true"
@@ -15,20 +17,19 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@style/Theme.ProtecTalk">
 
-        <!-- Launcher activity -->
-        <activity
-            android:name=".activities.MainActivity"
+        <!-- Incoming Call Receiver -->
+        <receiver android:name=".receivers.IncomingCallReceiver"
             android:exported="true">
             <intent-filter>
-                <action android:name="android.intent.action.MAIN"/>
-                <category android:name="android.intent.category.LAUNCHER"/>
+                <action android:name="android.intent.action.PHONE_STATE" />
             </intent-filter>
-        </activity>
+        </receiver>
 
-        <!-- Foreground service for call listening -->
+        <!-- Foreground service for background recording -->
         <service
-            android:name=".services.CallListenerService"
-            android:exported="false"
-            android:foregroundServiceType="phoneCall"/>
+            android:name=".services.ProtectalkService"
+            android:exported="true"
+            android:foregroundServiceType="microphone"/>
     </application>
+
 </manifest>

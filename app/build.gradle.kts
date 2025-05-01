@@ -20,14 +20,13 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // ─── Load keys from local.properties ───
+        // Load HF key
         val localPropsFile = rootProject.file("local.properties")
         val localProps = Properties().apply {
             if (localPropsFile.exists()) {
                 FileInputStream(localPropsFile).use { load(it) }
             }
         }
-        // Hugging Face key for the tiny-spam model
         val hfKey: String = localProps.getProperty("huggingface_api_key", "")
         buildConfigField("String", "HF_API_KEY", "\"$hfKey\"")
     }
@@ -51,8 +50,8 @@ android {
     }
 
     buildFeatures {
-        compose      = true
-        buildConfig  = true   // ← ensures BuildConfig.HF_API_KEY & OPENAI_API_KEY are generated
+        compose     = true
+        buildConfig = true
     }
 }
 
@@ -67,16 +66,17 @@ dependencies {
     implementation(libs.androidx.material3)
     implementation(libs.androidx.appcompat)
 
-    // HTTP client for Hugging Face calls
     implementation(libs.okhttp)
 
-    testImplementation(libs.junit)
+    // Vosk offline STT
+    implementation("com.alphacephei:vosk-android:0.3.47")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.1")
 
+    testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.ui.test.junit4)
-
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
 }
