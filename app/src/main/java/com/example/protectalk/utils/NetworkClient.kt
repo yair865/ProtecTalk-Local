@@ -1,4 +1,6 @@
 package com.example.protectalk.utils
+/*
+package com.example.protectalk.utils
 
 import android.util.Log
 import com.example.protectalk.BuildConfig
@@ -24,9 +26,11 @@ object NetworkClient {
         .readTimeout(15, TimeUnit.SECONDS)
         .build()
 
-    /**
+    */
+/**
      * Returns a risk score [0.0, 1.0].
-     */
+     *//*
+
     suspend fun getRiskScore(segment: String): Double = withContext(Dispatchers.IO) {
         try {
             val payload = JSONObject().apply {
@@ -69,3 +73,4 @@ object NetworkClient {
         }
     }
 }
+*/
