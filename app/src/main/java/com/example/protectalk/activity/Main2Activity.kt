@@ -6,6 +6,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.telecom.TelecomManager
@@ -20,28 +21,38 @@ import com.google.android.material.snackbar.Snackbar
 class Main2Activity : AppCompatActivity() {
     private lateinit var binding: ActivityMain2Binding
 
-    // Launcher for runtime permissions
     private val permLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
-        val okPhoneState = results[Manifest.permission.READ_PHONE_STATE] == true
-        val okStorage   = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        val okPhone = results[Manifest.permission.READ_PHONE_STATE] == true
+        val okStorage = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             results[Manifest.permission.READ_MEDIA_AUDIO] == true
         } else {
             results[Manifest.permission.READ_EXTERNAL_STORAGE] == true
         }
-        if (!okPhoneState || !okStorage) {
+        if (!okPhone || !okStorage) {
             Snackbar.make(binding.root, "Permissions required for transcription", Snackbar.LENGTH_INDEFINITE)
                 .setAction("Grant") { requestPermissions() }
                 .show()
         }
     }
 
-    // Receiver for transcription results
     private val transcriptReceiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
-            val text = intent.getStringExtra(ProtecTalkService.EXTRA_TEXT) ?: ""
-            binding.tvTranscript.text = text
+            val transcript = intent.getStringExtra(ProtecTalkService.EXTRA_TRANSCRIPT) ?: ""
+            val score      = intent.getIntExtra   (ProtecTalkService.EXTRA_SCORE, 0)
+            val analysis   = intent.getStringExtra(ProtecTalkService.EXTRA_ANALYSIS) ?: ""
+
+            binding.tvTranscript.text = transcript
+            binding.tvScore.text      = "$score % scam-risk"
+            binding.tvAnalysis.text   = analysis
+
+            // highlight if above threshold
+            if (score >= ProtecTalkService.ALERT_THRESHOLD) {
+                binding.tvScore.setTextColor(Color.RED)
+            } else {
+                binding.tvScore.setTextColor(Color.WHITE)
+            }
         }
     }
 
@@ -55,34 +66,24 @@ class Main2Activity : AppCompatActivity() {
         binding = ActivityMain2Binding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // 1) Request necessary permissions
         requestPermissions()
-
-        // 2) Prompt to become default dialer (optional)
         promptDefaultDialer()
 
-        // 3) Start the foreground service for post-call transcription
+        // start service
         ContextCompat.startForegroundService(
             this,
             Intent(this, ProtecTalkService::class.java)
         )
         Snackbar.make(binding.root, "ProtecTalk Service started", Snackbar.LENGTH_LONG).show()
 
-        // 4) Register receiver to get transcripts (use RECEIVER_NOT_EXPORTED on Android 13+)
+        // register for results
+        val filter = IntentFilter(ProtecTalkService.ACTION_TRANSCRIPT)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(
-                transcriptReceiver,
-                IntentFilter(ProtecTalkService.ACTION_TRANSCRIPT),
-                Context.RECEIVER_NOT_EXPORTED
-            )
+            registerReceiver(transcriptReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
-            registerReceiver(
-                transcriptReceiver,
-                IntentFilter(ProtecTalkService.ACTION_TRANSCRIPT)
-            )
+            registerReceiver(transcriptReceiver, filter)
         }
 
-        // 5) Manual restart via FAB
         binding.fabStart.setOnClickListener {
             ContextCompat.startForegroundService(
                 this,
@@ -122,11 +123,6 @@ class Main2Activity : AppCompatActivity() {
         }
     }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        unregisterReceiver(transcriptReceiver)
-    }
-
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
         if (requestCode == REQUEST_ROLE_DIALER) {
@@ -134,5 +130,10 @@ class Main2Activity : AppCompatActivity() {
             else "Dialer role not granted"
             Toast.makeText(this, msg, Toast.LENGTH_SHORT).show()
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        unregisterReceiver(transcriptReceiver)
     }
 }

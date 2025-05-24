@@ -1,30 +1,70 @@
 <?xml version="1.0" encoding="utf-8"?>
 <androidx.coordinatorlayout.widget.CoordinatorLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent">
 
+    <!-- Top app bar -->
     <com.google.android.material.appbar.MaterialToolbar
         android:id="@+id/toolbar"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:title="@string/app_name" />
+        android:title="@string/app_name"
+        app:layout_scrollFlags="scroll|enterAlways" />
 
-    <!-- Transcript goes here -->
-    <TextView
-        android:id="@+id/tvTranscript"
+    <!-- Scrollable content: transcript, score, analysis -->
+    <ScrollView
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_margin="16dp"
+        android:layout_height="match_parent"
         android:layout_marginTop="?attr/actionBarSize"
-        android:text="Waiting for next call…"
-        android:textSize="16sp" />
+        app:layout_behavior="@string/appbar_scrolling_view_behavior">
 
+        <LinearLayout
+            android:orientation="vertical"
+            android:padding="16dp"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <!-- 1) Transcript -->
+            <TextView
+                android:id="@+id/tvTranscript"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Waiting for next call…"
+                android:textSize="16sp" />
+
+            <!-- 2) Scam-risk score -->
+            <TextView
+                android:id="@+id/tvScore"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:text="0% scam-risk"
+                android:textSize="16sp"
+                android:textColor="@android:color/white" />
+
+            <!-- 3) Brief analysis -->
+            <TextView
+                android:id="@+id/tvAnalysis"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="Analysis will appear here."
+                android:textSize="14sp" />
+
+        </LinearLayout>
+    </ScrollView>
+
+    <!-- 4) Floating action button to restart service -->
     <com.google.android.material.floatingactionbutton.FloatingActionButton
         android:id="@+id/fabStart"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:layout_gravity="bottom|end"
+        android:contentDescription="@string/restart_service"
+        app:srcCompat="@android:drawable/ic_media_play"
+        app:layout_anchor="@id/tvAnalysis"
+        app:layout_anchorGravity="bottom|end"
         android:layout_margin="16dp" />
 
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

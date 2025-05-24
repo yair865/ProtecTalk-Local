@@ -8,6 +8,13 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+val localProps = Properties().apply {
+    val propsFile = rootProject.file("local.properties")
+    if (propsFile.exists()) {
+        FileInputStream(propsFile).use { load(it) }
+    }
+}
+
 android {
     namespace = "com.example.protectalk"
     compileSdk = 35
@@ -21,16 +28,16 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // Load your API key from local.properties (never checked into VCS)
-        val props = Properties().apply {
-            rootProject.file("local.properties").takeIf { it.exists() }?.also {
-                FileInputStream(it).use { load(it) }
-            }
-        }
+        // inject keys from local.properties
         buildConfigField(
             "String",
             "GOOGLE_SPEECH_API_KEY",
-            "\"${props.getProperty("google_speech_api_key", "")}\""
+            "\"${localProps.getProperty("google_speech_api_key", "")}\""
+        )
+        buildConfigField(
+            "String",
+            "OPENAI_API_KEY",
+            "\"${localProps.getProperty("openai_api_key", "")}\""
         )
     }
 
@@ -54,7 +61,7 @@ dependencies {
     implementation("androidx.appcompat:appcompat:1.6.1")
     implementation("com.google.android.material:material:1.9.0")
 
-    // HTTP client for Google Speech-to-Text
+    // HTTP client for Google Speech-to-Text & OpenAI
     implementation("com.squareup.okhttp3:okhttp:4.11.0")
 
     // Kotlin coroutines for background work
