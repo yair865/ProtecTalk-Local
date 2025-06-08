@@ -14,7 +14,7 @@ import androidx.annotation.RequiresApi
 import com.example.protectalk.BuildConfig
 import com.example.protectalk.analysis.ChatGPTAnalyzer
 import com.example.protectalk.notifications.NotificationHelper
-import com.example.protectalk.transcription.RealTimeTranscriber
+import com.example.protectalk.transcription.Transcriber
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -33,11 +33,11 @@ class ProtecTalkService : Service() {
     private var callStateCallback: TelephonyCallbackCallStateListener? = null
     private var legacyPhoneStateListener: PhoneStateListener? = null
 
-    private val transcriber by lazy { RealTimeTranscriber() }
+    private val transcriber by lazy { Transcriber() }
     private val analyzer by lazy { ChatGPTAnalyzer(BuildConfig.OPENAI_API_KEY) }
 
     companion object {
-        const val ALERT_THRESHOLD = 70
+        const val ALERT_THRESHOLD = 60
         const val ACTION_TRANSCRIPT = "com.example.protectalk.TRANSCRIPT_READY"
         const val EXTRA_TRANSCRIPT = "transcript_text"
         const val EXTRA_SCORE = "scam_score"
@@ -49,8 +49,6 @@ class ProtecTalkService : Service() {
         Log.d(TAG, "Service created")
 
         NotificationHelper.createNotificationChannel(this)
-        val notification = NotificationHelper.buildForegroundNotification(this)
-        startForeground(1, notification)
 
         phoneMgr = getSystemService(TELEPHONY_SERVICE) as TelephonyManager
 

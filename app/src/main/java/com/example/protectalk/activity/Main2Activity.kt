@@ -20,6 +20,8 @@ import com.example.protectalk.databinding.ActivityMain2Binding
 import com.example.protectalk.services.ProtecTalkService
 import com.google.android.material.snackbar.Snackbar
 import androidx.core.net.toUri
+import android.graphics.Typeface
+
 
 class Main2Activity : AppCompatActivity() {
     private lateinit var binding: ActivityMain2Binding
@@ -68,9 +70,16 @@ class Main2Activity : AppCompatActivity() {
 
             if (score >= ProtecTalkService.ALERT_THRESHOLD) {
                 binding.tvScore.setTextColor(Color.RED)
+                binding.tvScore.setTypeface(null, Typeface.BOLD)
+                Snackbar.make(binding.root, "⚠️ Scam risk detected! Be cautious.", Snackbar.LENGTH_LONG)
+                    .setBackgroundTint(Color.RED)
+                    .setTextColor(Color.WHITE)
+                    .show()
             } else {
                 binding.tvScore.setTextColor(Color.WHITE)
+                binding.tvScore.setTypeface(null, Typeface.NORMAL)
             }
+
         }
     }
 

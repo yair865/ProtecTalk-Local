@@ -18,7 +18,7 @@ import java.io.File
 import java.util.concurrent.TimeoutException
 
 @Suppress("NULLABILITY_MISMATCH_BASED_ON_JAVA_ANNOTATIONS")
-class RealTimeTranscriber {
+class Transcriber {
     companion object {
         private const val TAG = "RealTimeTranscriber"
         private val JSON = "application/json; charset=utf-8".toMediaType()
