@@ -1,50 +1,49 @@
+// File: com/example/protectalk/notifications/NotificationHelper.kt
+
 package com.example.protectalk.notifications
 
+import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
-import android.graphics.Color
 import android.os.Build
-import android.util.Log
 import androidx.core.app.NotificationCompat
+import com.example.protectalk.R
 
 object NotificationHelper {
-    private const val TAG = "NotificationHelper"
-    private const val ALERT_CHANNEL_ID    = "scamAlertChannel"
-    private const val ALERT_NOTIFICATION_ID = 1338
+    const val CHANNEL_ID = "protectalk_service"
 
-    fun createAlertChannel(ctx: Context) {
+    fun createNotificationChannel(context: Context) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            Log.d(TAG, "Creating alert channel")
-            val nm = ctx.getSystemService(NotificationManager::class.java)
-            nm.createNotificationChannel(
-                NotificationChannel(
-                    ALERT_CHANNEL_ID,
-                    "Scam Alerts",
-                    NotificationManager.IMPORTANCE_HIGH
-                ).apply {
-                    enableLights(true)
-                    lightColor = Color.RED
-                    enableVibration(true)
-                }
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "ProtecTalk Service",
+                NotificationManager.IMPORTANCE_LOW
             )
+            val manager = context.getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(channel)
         }
     }
 
-    fun sendAlert(ctx: Context, score: Int, analysis: String) {
-        Log.d(TAG, "sendAlert() score=$score")
-        val notification = NotificationCompat.Builder(ctx, ALERT_CHANNEL_ID)
-            // use a built-in alert icon
-            .setSmallIcon(android.R.drawable.ic_dialog_alert)
-            .setContentTitle("⚠️ Scam Risk: $score/100")
-            .setContentText(analysis)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(analysis))
-            .setColor(Color.RED)
+    fun buildForegroundNotification(context: Context): Notification {
+        return NotificationCompat.Builder(context, CHANNEL_ID)
+            .setContentTitle("ProtecTalk Active")
+            .setContentText("Analyzing calls for scams.")
+            .setSmallIcon(R.mipmap.ic_launcher) // Make sure ic_launcher exists
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setOngoing(true)
+            .build()
+    }
+
+    fun sendAlert(context: Context, score: Int, analysis: List<String>) {
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setContentTitle("Potential Scam Call Detected!")
+            .setContentText("Risk Score: $score\n" + analysis.joinToString("\n"))
+            .setSmallIcon(R.mipmap.ic_launcher) // Or your preferred icon
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .build()
-
-        ctx.getSystemService(NotificationManager::class.java)
-            .notify(ALERT_NOTIFICATION_ID, notification)
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.notify(2, notification)
     }
 }

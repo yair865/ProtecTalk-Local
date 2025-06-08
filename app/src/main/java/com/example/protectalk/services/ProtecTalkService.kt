@@ -1,23 +1,25 @@
+@file:Suppress("DEPRECATION")
+
 package com.example.protectalk.services
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.app.Service
-import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import android.telephony.PhoneStateListener
+import android.telephony.TelephonyCallback
 import android.telephony.TelephonyManager
 import android.util.Log
-import androidx.core.app.NotificationCompat
+import androidx.annotation.RequiresApi
 import com.example.protectalk.BuildConfig
 import com.example.protectalk.analysis.ChatGPTAnalyzer
 import com.example.protectalk.notifications.NotificationHelper
 import com.example.protectalk.transcription.RealTimeTranscriber
-import com.example.protectalk.utils.RecordingFinder
-import kotlinx.coroutines.*
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class ProtecTalkService : Service() {
     private val TAG = "ProtecTalkService"
@@ -26,117 +28,114 @@ class ProtecTalkService : Service() {
     private val scope = CoroutineScope(Dispatchers.Main + job)
 
     private lateinit var phoneMgr: TelephonyManager
-    private var prevState = TelephonyManager.CALL_STATE_IDLE
+    private var prevState: Int = TelephonyManager.CALL_STATE_IDLE
+
+    private var callStateCallback: TelephonyCallbackCallStateListener? = null
+    private var legacyPhoneStateListener: PhoneStateListener? = null
 
     private val transcriber by lazy { RealTimeTranscriber() }
-    private val analyzer   by lazy { ChatGPTAnalyzer(BuildConfig.OPENAI_API_KEY) }
+    private val analyzer by lazy { ChatGPTAnalyzer(BuildConfig.OPENAI_API_KEY) }
 
     companion object {
-        private const val FG_CHANNEL_ID      = "protecTalkForeground"
-        private const val FG_NOTIFICATION_ID = 1337
-        const val ALERT_THRESHOLD           = 70
-        const val ACTION_TRANSCRIPT         = "com.example.protectalk.TRANSCRIPT_READY"
-        const val EXTRA_TRANSCRIPT          = "transcript_text"
-        const val EXTRA_SCORE               = "scam_score"
-        const val EXTRA_ANALYSIS            = "analysis_text"
+        const val ALERT_THRESHOLD = 70
+        const val ACTION_TRANSCRIPT = "com.example.protectalk.TRANSCRIPT_READY"
+        const val EXTRA_TRANSCRIPT = "transcript_text"
+        const val EXTRA_SCORE = "scam_score"
+        const val EXTRA_ANALYSIS = "analysis_list"
     }
 
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "Service created")
-        createForegroundChannel()
-        NotificationHelper.createAlertChannel(this)
-        startForeground(
-            FG_NOTIFICATION_ID,
-            buildForegroundNotification("ProtecTalk: waiting for call…")
-        )
 
-        phoneMgr = getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
-        @Suppress("DEPRECATION")
-        phoneMgr.listen(callListener, PhoneStateListener.LISTEN_CALL_STATE)
-    }
+        NotificationHelper.createNotificationChannel(this)
+        val notification = NotificationHelper.buildForegroundNotification(this)
+        startForeground(1, notification)
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        Log.d(TAG, "onStartCommand")
-        return START_STICKY
-    }
+        phoneMgr = getSystemService(TELEPHONY_SERVICE) as TelephonyManager
 
-    private val callListener = object : PhoneStateListener() {
-        override fun onCallStateChanged(state: Int, incomingNumber: String?) {
-            if (prevState == TelephonyManager.CALL_STATE_OFFHOOK
-                && state == TelephonyManager.CALL_STATE_IDLE
-            ) {
-                Log.d(TAG, "Call ended, processing")
-                scope.launch { processCall() }
-            }
-            prevState = state
-        }
-    }
-
-    private suspend fun processCall() {
-        Log.d(TAG, "processCall() start")
-
-        // 1) Do file + network work on IO
-        val (transcript, score, analysis) = withContext(Dispatchers.IO) {
-            Log.d(TAG, "Finding latest recording")
-            val file = RecordingFinder.findLatestRecording()
-
-            Log.d(TAG, "Transcribing audio")
-            val text = file?.let { transcriber.transcribe(it) }
-                ?: "No recording found."
-            Log.d(TAG, "Transcription: $text")
-            Log.d(TAG, "Analyzing transcript with ChatGPT")
-            val result = analyzer.analyze(text)
-
-            Triple(text, result.score, result.analysis)
-        }
-
-        // 2) Broadcast results
-        Log.d(TAG, "Broadcasting results")
-        sendBroadcast(Intent(ACTION_TRANSCRIPT).apply {
-            putExtra(EXTRA_TRANSCRIPT, transcript)
-            putExtra(EXTRA_SCORE, score)
-            putExtra(EXTRA_ANALYSIS, analysis)
-        })
-
-        // 3) Send alert if needed
-        if (score >= ALERT_THRESHOLD) {
-            Log.d(TAG, "Score $score ≥ $ALERT_THRESHOLD, sending alert")
-            NotificationHelper.sendAlert(this@ProtecTalkService, score, analysis)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            callStateCallback = TelephonyCallbackCallStateListener()
+            phoneMgr.registerTelephonyCallback(mainExecutor, callStateCallback!!)
         } else {
-            Log.d(TAG, "Score $score < $ALERT_THRESHOLD, no alert")
+            legacyPhoneStateListener = object : PhoneStateListener() {
+                @RequiresApi(Build.VERSION_CODES.S)
+                override fun onCallStateChanged(state: Int, phoneNumber: String?) {
+                    handleCallStateChange(state)
+                }
+            }
+            @Suppress("DEPRECATION")
+            phoneMgr.listen(legacyPhoneStateListener, PhoneStateListener.LISTEN_CALL_STATE)
         }
-
-        Log.d(TAG, "processCall() end")
     }
 
     override fun onDestroy() {
         super.onDestroy()
         Log.d(TAG, "Service destroyed")
-        @Suppress("DEPRECATION")
-        phoneMgr.listen(null, 0)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            callStateCallback?.let { phoneMgr.unregisterTelephonyCallback(it) }
+        } else {
+            @Suppress("DEPRECATION")
+            legacyPhoneStateListener?.let { phoneMgr.listen(it, PhoneStateListener.LISTEN_NONE) }
+        }
         job.cancel()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
-    private fun createForegroundChannel() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val nm = getSystemService(NotificationManager::class.java)
-            nm.createNotificationChannel(
-                NotificationChannel(
-                    FG_CHANNEL_ID,
-                    "ProtecTalk Service",
-                    NotificationManager.IMPORTANCE_LOW
-                )
-            )
+    @RequiresApi(Build.VERSION_CODES.S)
+    private fun handleCallStateChange(state: Int) {
+        if (prevState == TelephonyManager.CALL_STATE_OFFHOOK &&
+            state == TelephonyManager.CALL_STATE_IDLE
+        ) {
+            Log.d(TAG, "Call ended – starting transcription+analysis flow")
+            scope.launch { processCall() }
         }
+        prevState = state
     }
 
-    private fun buildForegroundNotification(text: String): Notification =
-        NotificationCompat.Builder(this, FG_CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-            .setContentTitle(text)
-            .setOngoing(true)
-            .build()
+    @RequiresApi(Build.VERSION_CODES.S)
+    private suspend fun processCall() {
+        Log.d(TAG, "processCall() start")
+
+        val transcript = withContext(Dispatchers.IO) {
+            try {
+                transcriber.transcribeFromLatestFile()
+            } catch (e: Exception) {
+                Log.e(TAG, "Transcription failed: ${e.message}", e)
+                "Transcription error or timeout."
+            }
+        }
+
+        val scamResult = try {
+            analyzer.analyze(transcript)
+        } catch (e: Exception) {
+            Log.e(TAG, "Analysis failed: ${e.message}", e)
+            com.example.protectalk.analysis.ScamResult(
+                score = 0,
+                analysisPoints = listOf("Analysis error: ${e.message}")
+            )
+        }
+
+        val broadcast = Intent(ACTION_TRANSCRIPT).apply {
+            putExtra(EXTRA_TRANSCRIPT, transcript)
+            putExtra(EXTRA_SCORE, scamResult.score)
+            putStringArrayListExtra(EXTRA_ANALYSIS, ArrayList(scamResult.analysisPoints))
+        }
+        sendBroadcast(broadcast)
+
+        if (scamResult.score >= ALERT_THRESHOLD) {
+            NotificationHelper.sendAlert(this@ProtecTalkService, scamResult.score, scamResult.analysisPoints)
+        }
+
+        Log.d(TAG, "processCall() end")
+    }
+
+    @RequiresApi(Build.VERSION_CODES.S)
+    private inner class TelephonyCallbackCallStateListener : TelephonyCallback(),
+        TelephonyCallback.CallStateListener {
+        override fun onCallStateChanged(state: Int) {
+            handleCallStateChange(state)
+        }
+    }
 }
