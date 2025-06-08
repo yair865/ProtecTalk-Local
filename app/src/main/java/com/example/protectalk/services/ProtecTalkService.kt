@@ -125,6 +125,9 @@ class ProtecTalkService : Service() {
         if (scamResult.score >= ALERT_THRESHOLD) {
             NotificationHelper.sendAlert(this@ProtecTalkService, scamResult.score, scamResult.analysisPoints)
         }
+        else{
+            NotificationHelper.sendSafeAlert(this@ProtecTalkService)
+        }
 
         Log.d(TAG, "processCall() end")
     }

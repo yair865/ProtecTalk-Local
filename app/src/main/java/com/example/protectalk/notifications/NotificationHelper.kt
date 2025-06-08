@@ -1,6 +1,5 @@
 package com.example.protectalk.notifications
 
-import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Context
@@ -8,6 +7,7 @@ import android.graphics.Color
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import com.example.protectalk.R
+import androidx.core.graphics.toColorInt
 
 object NotificationHelper {
     const val CHANNEL_ID = "protectalk_alerts_v2" // CHANGED ID
@@ -43,4 +43,20 @@ object NotificationHelper {
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.notify(2, notification)
     }
+
+    fun sendSafeAlert(context: Context) {
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setContentTitle("✅ Call Safe")
+            .setContentText("No scam risk detected. This call is safe!")
+            .setStyle(NotificationCompat.BigTextStyle().bigText("No scam risk detected. This call is safe!"))
+            .setSmallIcon(R.drawable.ic_check_circle_green)
+            .setColor(Color.GREEN)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setAutoCancel(true)
+            .build()
+        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.notify(3, notification)
+    }
+
 }
