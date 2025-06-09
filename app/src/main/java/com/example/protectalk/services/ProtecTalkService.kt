@@ -13,7 +13,8 @@ import android.util.Log
 import androidx.annotation.RequiresApi
 import com.example.protectalk.BuildConfig
 import com.example.protectalk.analysis.ChatGPTAnalyzer
-import com.example.protectalk.notifications.NotificationHelper
+import com.example.protectalk.analysis.ScamResult
+import com.example.protectalk.notifications.ScamNotificationManager
 import com.example.protectalk.transcription.Transcriber
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -21,40 +22,54 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/**
+ * A foreground Android service that monitors phone call state,
+ * performs audio transcription after a call, and analyzes for scam risk.
+ */
 class ProtecTalkService : Service() {
-    private val TAG = "ProtecTalkService"
 
-    private val job = SupervisorJob()
-    private val scope = CoroutineScope(Dispatchers.Main + job)
+    // == Logging Tag ==
+    private val logTag: String = "ProtecTalkService"
 
-    private lateinit var phoneMgr: TelephonyManager
-    private var prevState: Int = TelephonyManager.CALL_STATE_IDLE
+    // == Coroutine Scope ==
+    private val serviceJob = SupervisorJob()
+    private val serviceScope = CoroutineScope(Dispatchers.Main + serviceJob)
 
-    private var callStateCallback: TelephonyCallbackCallStateListener? = null
+    // == Telephony ==
+    private lateinit var telephonyManager: TelephonyManager
+    private var previousCallState: Int = TelephonyManager.CALL_STATE_IDLE
+
+    private var modernTelephonyCallback: TelephonyCallbackCallStateListener? = null
     private var legacyPhoneStateListener: PhoneStateListener? = null
 
-    private val transcriber by lazy { Transcriber() }
-    private val analyzer by lazy { ChatGPTAnalyzer(BuildConfig.OPENAI_API_KEY) }
+    // == Core Components ==
+    private val transcriber: Transcriber by lazy { Transcriber() }
+    private val analyzer: ChatGPTAnalyzer by lazy { ChatGPTAnalyzer(BuildConfig.OPENAI_API_KEY) }
 
     companion object {
-        const val ALERT_THRESHOLD = 60
-        const val ACTION_TRANSCRIPT = "com.example.protectalk.TRANSCRIPT_READY"
-        const val EXTRA_TRANSCRIPT = "transcript_text"
-        const val EXTRA_SCORE = "scam_score"
-        const val EXTRA_ANALYSIS = "analysis_list"
+        // == Scam Detection Threshold ==
+        const val SCAM_ALERT_SCORE_THRESHOLD: Int = 60
+
+        // == Intent Actions and Extras ==
+        const val BROADCAST_ACTION_TRANSCRIPT_READY: String = "com.example.protectalk.TRANSCRIPT_READY"
+        const val EXTRA_KEY_TRANSCRIPT_TEXT: String = "transcript_text"
+        const val EXTRA_KEY_SCAM_SCORE: String = "scam_score"
+        const val EXTRA_KEY_ANALYSIS_DETAILS: String = "analysis_list"
     }
 
     override fun onCreate() {
         super.onCreate()
-        Log.d(TAG, "Service created")
+        Log.d(logTag, "Service created")
 
-        NotificationHelper.createNotificationChannel(this)
+        // Create the notification channel for scam alerts
+        ScamNotificationManager.createScamAlertNotificationChannel(this)
 
-        phoneMgr = getSystemService(TELEPHONY_SERVICE) as TelephonyManager
+        // Initialize telephony manager
+        telephonyManager = getSystemService(TELEPHONY_SERVICE) as TelephonyManager
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            callStateCallback = TelephonyCallbackCallStateListener()
-            phoneMgr.registerTelephonyCallback(mainExecutor, callStateCallback!!)
+            modernTelephonyCallback = TelephonyCallbackCallStateListener()
+            telephonyManager.registerTelephonyCallback(mainExecutor, modernTelephonyCallback!!)
         } else {
             legacyPhoneStateListener = object : PhoneStateListener() {
                 @RequiresApi(Build.VERSION_CODES.S)
@@ -62,76 +77,99 @@ class ProtecTalkService : Service() {
                     handleCallStateChange(state)
                 }
             }
+
             @Suppress("DEPRECATION")
-            phoneMgr.listen(legacyPhoneStateListener, PhoneStateListener.LISTEN_CALL_STATE)
+            telephonyManager.listen(legacyPhoneStateListener, PhoneStateListener.LISTEN_CALL_STATE)
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        Log.d(TAG, "Service destroyed")
+        Log.d(logTag, "Service destroyed")
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            callStateCallback?.let { phoneMgr.unregisterTelephonyCallback(it) }
+            modernTelephonyCallback?.let {
+                telephonyManager.unregisterTelephonyCallback(it)
+            }
         } else {
             @Suppress("DEPRECATION")
-            legacyPhoneStateListener?.let { phoneMgr.listen(it, PhoneStateListener.LISTEN_NONE) }
+            legacyPhoneStateListener?.let {
+                telephonyManager.listen(it, PhoneStateListener.LISTEN_NONE)
+            }
         }
-        job.cancel()
+
+        serviceJob.cancel()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    /**
+     * Handles call state transitions.
+     * If a call has just ended, starts transcription and scam analysis.
+     */
     @RequiresApi(Build.VERSION_CODES.S)
-    private fun handleCallStateChange(state: Int) {
-        if (prevState == TelephonyManager.CALL_STATE_OFFHOOK &&
-            state == TelephonyManager.CALL_STATE_IDLE
+    private fun handleCallStateChange(newCallState: Int) {
+        if (previousCallState == TelephonyManager.CALL_STATE_OFFHOOK &&
+            newCallState == TelephonyManager.CALL_STATE_IDLE
         ) {
-            Log.d(TAG, "Call ended – starting transcription+analysis flow")
-            scope.launch { processCall() }
+            Log.d(logTag, "Call ended — initiating transcription and analysis.")
+            serviceScope.launch { processCompletedCallAudio() }
         }
-        prevState = state
+        previousCallState = newCallState
     }
 
+    /**
+     * Transcribes the last call audio and analyzes it for scam detection.
+     * Sends broadcast with the result and optionally triggers a notification.
+     */
     @RequiresApi(Build.VERSION_CODES.S)
-    private suspend fun processCall() {
-        Log.d(TAG, "processCall() start")
+    private suspend fun processCompletedCallAudio() {
+        Log.d(logTag, "processCompletedCallAudio() started")
 
-        val transcript = withContext(Dispatchers.IO) {
+        val callTranscript: String = withContext(Dispatchers.IO) {
             try {
                 transcriber.transcribeFromLatestFile()
             } catch (e: Exception) {
-                Log.e(TAG, "Transcription failed: ${e.message}", e)
+                Log.e(logTag, "Transcription failed: ${e.message}", e)
                 "Transcription error or timeout."
             }
         }
 
-        val scamResult = try {
-            analyzer.analyze(transcript)
+        val scamResult: ScamResult = try {
+            analyzer.analyze(callTranscript)
         } catch (e: Exception) {
-            Log.e(TAG, "Analysis failed: ${e.message}", e)
-            com.example.protectalk.analysis.ScamResult(
+            Log.e(logTag, "Analysis failed: ${e.message}", e)
+            ScamResult(
                 score = 0,
                 analysisPoints = listOf("Analysis error: ${e.message}")
             )
         }
 
-        val broadcast = Intent(ACTION_TRANSCRIPT).apply {
-            putExtra(EXTRA_TRANSCRIPT, transcript)
-            putExtra(EXTRA_SCORE, scamResult.score)
-            putStringArrayListExtra(EXTRA_ANALYSIS, ArrayList(scamResult.analysisPoints))
-        }
-        sendBroadcast(broadcast)
-
-        if (scamResult.score >= ALERT_THRESHOLD) {
-            NotificationHelper.sendAlert(this@ProtecTalkService, scamResult.score, scamResult.analysisPoints)
-        }
-        else{
-            NotificationHelper.sendSafeAlert(this@ProtecTalkService)
+        val transcriptReadyIntent = Intent(BROADCAST_ACTION_TRANSCRIPT_READY).apply {
+            putExtra(EXTRA_KEY_TRANSCRIPT_TEXT, callTranscript)
+            putExtra(EXTRA_KEY_SCAM_SCORE, scamResult.score)
+            putStringArrayListExtra(EXTRA_KEY_ANALYSIS_DETAILS, ArrayList(scamResult.analysisPoints))
         }
 
-        Log.d(TAG, "processCall() end")
+        sendBroadcast(transcriptReadyIntent)
+
+        if (scamResult.score >= SCAM_ALERT_SCORE_THRESHOLD) {
+            ScamNotificationManager.showScamCallDetectedNotification(
+                applicationContext,
+                scamResult.score,
+                scamResult.analysisPoints
+            )
+        } else {
+            ScamNotificationManager.showSafeCallNotification(applicationContext)
+        }
+
+        Log.d(logTag, "processCompletedCallAudio() complete")
     }
 
+    /**
+     * Modern TelephonyCallback implementation for Android 12+.
+     * Listens for call state changes.
+     */
     @RequiresApi(Build.VERSION_CODES.S)
     private inner class TelephonyCallbackCallStateListener : TelephonyCallback(),
         TelephonyCallback.CallStateListener {

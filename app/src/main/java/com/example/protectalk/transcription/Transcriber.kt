@@ -1,6 +1,7 @@
 package com.example.protectalk.transcription
 
 import android.os.Build
+import android.util.Base64
 import android.util.Log
 import androidx.annotation.RequiresApi
 import com.example.protectalk.BuildConfig
@@ -17,46 +18,60 @@ import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.TimeoutException
 
-@Suppress("NULLABILITY_MISMATCH_BASED_ON_JAVA_ANNOTATIONS")
+/**
+ * Handles finding the latest audio recording and transcribing it using Google's Speech-to-Text API
+ * with speaker diarization enabled.
+ */
 class Transcriber {
-    companion object {
-        private const val TAG = "RealTimeTranscriber"
-        private val JSON = "application/json; charset=utf-8".toMediaType()
-        private val CLIENT = OkHttpClient()
 
-        private const val DIARIZE_ENDPOINT =
+    companion object {
+        // == Logging ==
+        private const val TAG: String = "RealTimeTranscriber"
+
+        // == HTTP ==
+        private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
+        private val httpClient: OkHttpClient = OkHttpClient()
+
+        // == Google STT ==
+        private const val GOOGLE_SPEECH_TO_TEXT_ENDPOINT: String =
             "https://speech.googleapis.com/v1p1beta1/speech:longrunningrecognize?key=${BuildConfig.GOOGLE_SPEECH_API_KEY}"
+
+        private const val MAX_POLLING_ATTEMPTS: Int = 120
+        private const val POLLING_DELAY_MS: Long = 1500L
     }
 
+    /**
+     * Locates the most recent recording, converts it if necessary, and sends it to Google's
+     * Speech-to-Text API for diarized transcription. Returns the final labeled transcript.
+     */
     @RequiresApi(Build.VERSION_CODES.S)
     suspend fun transcribeFromLatestFile(): String = withContext(Dispatchers.IO) {
-        Log.d(TAG, "=== Locating latest call recording file ===")
-        val originalFile: File? = RecordingFinder.findLatestRecording()
+        Log.d(TAG, "Searching for latest call recording...")
 
-        if (originalFile == null) {
-            Log.w(TAG, "No recording file found in folders")
+        val latestRecordingFile: File? = RecordingFinder.findLatestRecording()
+        if (latestRecordingFile == null) {
+            Log.w(TAG, "No recent recording found.")
             return@withContext "No recording found."
         }
 
-        Log.d(TAG, "Found recording: ${originalFile.absolutePath}")
+        Log.d(TAG, "Found recording: ${latestRecordingFile.absolutePath}")
 
-        val fileToUse = when (originalFile.extension.lowercase()) {
+        val inputAudioFile: File = when (latestRecordingFile.extension.lowercase()) {
             "m4a" -> {
-                val wavOutput =
-                    File(originalFile.parent, "${originalFile.nameWithoutExtension}.wav")
-                val success = AudioConverter.convertM4aToWav(originalFile, wavOutput)
-                if (!success) return@withContext "WAV conversion failed ❗"
-                wavOutput
+                val wavFile = File(latestRecordingFile.parent, "${latestRecordingFile.nameWithoutExtension}.wav")
+                val conversionSuccessful: Boolean = AudioConverter.convertM4aToWav(latestRecordingFile, wavFile)
+                if (!conversionSuccessful) return@withContext "WAV conversion failed ❗"
+                wavFile
             }
 
-            else -> originalFile
+            else -> latestRecordingFile
         }
 
-        val bytes = fileToUse.readBytes()
-        val audioB64 = android.util.Base64.encodeToString(bytes, android.util.Base64.NO_WRAP)
+        val audioBytes: ByteArray = inputAudioFile.readBytes()
+        val audioBase64: String = Base64.encodeToString(audioBytes, Base64.NO_WRAP)
 
-        val ext = fileToUse.extension.lowercase()
-        val encoding = when (ext) {
+        val audioFormatExtension: String = inputAudioFile.extension.lowercase()
+        val encodingType: String = when (audioFormatExtension) {
             "wav" -> "LINEAR16"
             "flac" -> "FLAC"
             "mp4", "m4a", "3gp" -> "MPEG4"
@@ -64,9 +79,9 @@ class Transcriber {
             else -> "ENCODING_UNSPECIFIED"
         }
 
-        val configJson = JSONObject().apply {
-            put("encoding", encoding)
-            put("sampleRateHertz", 48000) // If you convert to 16kHz mono, change to 16000!
+        val recognitionConfigJson: JSONObject = JSONObject().apply {
+            put("encoding", encodingType)
+            put("sampleRateHertz", 48000) // Note: Change to 16000 if down sampled
             put("languageCode", "en-US")
             put("enableSpeakerDiarization", true)
             put("diarizationSpeakerCount", 2)
@@ -75,80 +90,74 @@ class Transcriber {
             put("enableWordTimeOffsets", true)
         }
 
-        val payload = JSONObject().apply {
-            put("config", configJson)
-            put("audio", JSONObject().put("content", audioB64))
+        val sttPayload: String = JSONObject().apply {
+            put("config", recognitionConfigJson)
+            put("audio", JSONObject().put("content", audioBase64))
         }.toString()
 
-        Log.d(TAG, "Uploading to STT (encoding=$encoding)")
+        Log.d(TAG, "Uploading audio to Google STT (encoding=$encodingType)")
 
-        val operationName = CLIENT.newCall(
+        val operationId: String = httpClient.newCall(
             Request.Builder()
-                .url(DIARIZE_ENDPOINT)
-                .post(payload.toRequestBody(JSON))
+                .url(GOOGLE_SPEECH_TO_TEXT_ENDPOINT)
+                .post(sttPayload.toRequestBody(JSON_MEDIA_TYPE))
                 .build()
-        ).execute().use { resp ->
-            val body = resp.body!!.string()
-            if (!resp.isSuccessful) {
-                Log.e(TAG, "STT start failed: ${resp.code} / $body")
-                throw IllegalStateException("STT start error ${resp.code}")
+        ).execute().use { response ->
+            val responseBody = response.body!!.string()
+            if (!response.isSuccessful) {
+                Log.e(TAG, "Failed to start STT: ${response.code} / $responseBody")
+                throw IllegalStateException("STT request failed with code ${response.code}")
             }
-            JSONObject(body).getString("name")
+            JSONObject(responseBody).getString("name")
         }
 
-        val statusUrl =
-            "https://speech.googleapis.com/v1/operations/$operationName?key=${BuildConfig.GOOGLE_SPEECH_API_KEY}"
+        val operationStatusUrl =
+            "https://speech.googleapis.com/v1/operations/$operationId?key=${BuildConfig.GOOGLE_SPEECH_API_KEY}"
 
-        val MAX_ATTEMPTS = 120
-        val SLEEP_MS = 1500L
+        repeat(MAX_POLLING_ATTEMPTS) {
+            delay(POLLING_DELAY_MS)
 
-        repeat(MAX_ATTEMPTS) {
-            delay(SLEEP_MS)
-            CLIENT.newCall(Request.Builder().url(statusUrl).build()).execute().use { r ->
-                val b = r.body!!.string()
-                if (r.isSuccessful) {
-                    val json = JSONObject(b)
-                    Log.d(TAG, "Poll response: $json")
-                    if (json.optBoolean("done", false)) {
-                        val response = json.optJSONObject("response") ?: return@use
-                        val results = response.optJSONArray("results") ?: return@use
+            httpClient.newCall(Request.Builder().url(operationStatusUrl).build()).execute().use { pollingResponse ->
+                val responseJsonString = pollingResponse.body!!.string()
+                if (pollingResponse.isSuccessful) {
+                    val pollingJson = JSONObject(responseJsonString)
+                    Log.d(TAG, "Polling STT: $pollingJson")
 
-                        // ---- FIXED diarizedWords extraction ----
-                        val diarizedWords = (0 until results.length())
+                    if (pollingJson.optBoolean("done", false)) {
+                        val responseJson = pollingJson.optJSONObject("response") ?: return@use
+                        val resultsJsonArray = responseJson.optJSONArray("results") ?: return@use
+
+                        val diarizedWordsList = (0 until resultsJsonArray.length())
                             .asSequence()
                             .flatMap { i ->
-                                val alternatives = results.getJSONObject(i).getJSONArray("alternatives")
-                                (0 until alternatives.length()).asSequence().flatMap { j ->
-                                    val wordsArray = alternatives.getJSONObject(j).optJSONArray("words")
-                                    wordsArray?.let { arr ->
-                                        (0 until arr.length()).asSequence().map { k -> arr.getJSONObject(k) }
+                                val alternativesArray = resultsJsonArray.getJSONObject(i).getJSONArray("alternatives")
+                                (0 until alternativesArray.length()).asSequence().flatMap { j ->
+                                    val wordsArray = alternativesArray.getJSONObject(j).optJSONArray("words")
+                                    wordsArray?.let { wordArr ->
+                                        (0 until wordArr.length()).asSequence().map { k -> wordArr.getJSONObject(k) }
                                     } ?: emptySequence()
                                 }
                             }
                             .filter { it.has("speakerTag") }
                             .toList()
-                        // ---------------------------------------
 
-                        if (diarizedWords.isEmpty()) {
-                            Log.e(TAG, "No diarized words found! (Diarization missing)")
+                        if (diarizedWordsList.isEmpty()) {
+                            Log.e(TAG, "Diarization failed: no speaker-tagged words.")
                             return@withContext "No diarized words found (diarization failed)."
                         }
 
-                        val diarizedTranscript = buildString {
+                        val diarizedTranscript: String = buildString {
                             var lastSpeaker = -1
-                            for (wordObj in diarizedWords) {
-                                val speaker = wordObj.getInt("speakerTag")
-                                val word = wordObj.getString("word")
-                                wordObj.optString("startTime", "")
+                            for (wordObject in diarizedWordsList) {
+                                val speakerId = wordObject.getInt("speakerTag")
+                                val spokenWord = wordObject.getString("word")
 
-                                if (speaker != lastSpeaker) {
+                                if (speakerId != lastSpeaker) {
                                     if (lastSpeaker != -1) append("\n")
-                                    append(
-                                        if (speaker == 1) "caller: " else "phone user: "
-                                    )
-                                    lastSpeaker = speaker
+                                    append(if (speakerId == 1) "caller: " else "phone user: ")
+                                    lastSpeaker = speakerId
                                 }
-                                append("$word ")
+                                append("$spokenWord ")
                             }
                         }.trim()
 
@@ -156,11 +165,11 @@ class Transcriber {
                         return@withContext diarizedTranscript
                     }
                 } else {
-                    Log.e(TAG, "Polling error ${r.code}: ${r.body?.string()}")
+                    Log.e(TAG, "Polling failed: ${pollingResponse.code} / ${pollingResponse.body?.string()}")
                 }
             }
         }
 
-        throw TimeoutException("Transcription timed out")
+        throw TimeoutException("Transcription timed out after $MAX_POLLING_ATTEMPTS attempts.")
     }
 }

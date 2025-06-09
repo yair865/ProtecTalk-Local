@@ -2,13 +2,10 @@ package com.example.protectalk.activity
 
 import android.Manifest
 import android.annotation.SuppressLint
-import android.content.BroadcastReceiver
-import android.content.ComponentName
-import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
+import android.content.*
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.graphics.Typeface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -16,217 +13,234 @@ import android.provider.Settings
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
+import androidx.core.net.toUri
 import com.example.protectalk.databinding.ActivityMain2Binding
 import com.example.protectalk.services.ProtecTalkService
 import com.google.android.material.snackbar.Snackbar
-import androidx.core.net.toUri
-import android.graphics.Typeface
 
-
+/**
+ * Main entry point of the ProtecTalk app.
+ * Handles permission requests, UI interactions, and receives scam analysis broadcast.
+ */
 class Main2Activity : AppCompatActivity() {
+
+    // == Constants ==
+    private companion object {
+        const val PERMISSION_RATIONALE_MESSAGE = "Essential permissions are required. Please grant them."
+        const val PERMISSION_SETTINGS_REDIRECT_MESSAGE = "Permissions permanently denied. Enable in settings."
+        const val PERMISSION_GRANTED_SNACKBAR_MESSAGE = "ProtecTalk Service started"
+        const val PERMISSION_DENIED_SNACKBAR_MESSAGE = "Permissions missing."
+        const val CALL_RECORDING_SETTINGS_MESSAGE =
+            "Enable auto-record unknown callers in Phone → Settings → Record calls"
+
+        const val RED_COLOR: Int = Color.RED
+        const val WHITE_COLOR: Int = Color.WHITE
+    }
+
+    // == View Binding ==
     private lateinit var binding: ActivityMain2Binding
 
-    private val permLauncher = registerForActivityResult(
+    // == Permissions Launcher ==
+    private val permissionsLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
-        val okPhoneState = results[Manifest.permission.READ_PHONE_STATE] == true
-        val okNotifications = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        val phoneStateGranted = results[Manifest.permission.READ_PHONE_STATE] == true
+        val micGranted = results[Manifest.permission.RECORD_AUDIO] == true
+
+        val notificationsGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             results[Manifest.permission.POST_NOTIFICATIONS] == true
-        } else {
-            true
-        }
-        val okStorage = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        } else true
+
+        val storageGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             results[Manifest.permission.READ_MEDIA_AUDIO] == true
         } else {
             results[Manifest.permission.READ_EXTERNAL_STORAGE] == true
         }
-        val okMic = results[Manifest.permission.RECORD_AUDIO] == true
 
-        if (okPhoneState && okNotifications && okStorage && okMic) {
+        if (phoneStateGranted && micGranted && notificationsGranted && storageGranted) {
             startProtecTalkService()
         } else {
-            Snackbar.make(
-                binding.root,
-                "Essential permissions (phone state, storage, notifications, microphone) are required. Please grant them to use ProtecTalk.",
-                Snackbar.LENGTH_INDEFINITE
-            )
-                .setAction("Grant") {
-                    handlePermissionDenial()
-                }
-                .show()
+            showPersistentSnackbar(PERMISSION_RATIONALE_MESSAGE, "Grant") {
+                handlePermissionDenial()
+            }
         }
     }
 
-    private val transcriptReceiver = object : BroadcastReceiver() {
+    // == Broadcast Receiver ==
+    private val transcriptBroadcastReceiver = object : BroadcastReceiver() {
         @SuppressLint("SetTextI18n")
-        override fun onReceive(ctx: Context, intent: Intent) {
-            val transcript = intent.getStringExtra(ProtecTalkService.EXTRA_TRANSCRIPT) ?: ""
-            val score = intent.getIntExtra(ProtecTalkService.EXTRA_SCORE, 0)
-            val analysis = intent.getStringArrayListExtra(ProtecTalkService.EXTRA_ANALYSIS)?.joinToString("\n") ?: ""
+        override fun onReceive(context: Context, intent: Intent) {
+            val transcriptText: String = intent.getStringExtra(ProtecTalkService.EXTRA_KEY_TRANSCRIPT_TEXT).orEmpty()
+            val scamScore: Int = intent.getIntExtra(ProtecTalkService.EXTRA_KEY_SCAM_SCORE, 0)
+            val analysisDetails: String = intent
+                .getStringArrayListExtra(ProtecTalkService.EXTRA_KEY_ANALYSIS_DETAILS)
+                ?.joinToString("\n").orEmpty()
 
-            binding.tvTranscript.text = transcript
-            binding.tvScore.text = "$score % scam-risk"
-            binding.tvAnalysis.text = analysis
+            binding.tvTranscript.text = transcriptText
+            binding.tvScore.text = "$scamScore % scam-risk"
+            binding.tvAnalysis.text = analysisDetails
 
-            if (score >= ProtecTalkService.ALERT_THRESHOLD) {
-                binding.tvScore.setTextColor(Color.RED)
+            if (scamScore >= ProtecTalkService.SCAM_ALERT_SCORE_THRESHOLD) {
+                binding.tvScore.setTextColor(RED_COLOR)
                 binding.tvScore.setTypeface(null, Typeface.BOLD)
-                Snackbar.make(binding.root, "⚠️ Scam risk detected! Be cautious.", Snackbar.LENGTH_LONG)
-                    .setBackgroundTint(Color.RED)
-                    .setTextColor(Color.WHITE)
+
+                Snackbar.make(binding.root, "⚠️ Scam risk detected!", Snackbar.LENGTH_LONG)
+                    .setBackgroundTint(RED_COLOR)
+                    .setTextColor(WHITE_COLOR)
                     .show()
             } else {
-                binding.tvScore.setTextColor(Color.WHITE)
+                binding.tvScore.setTextColor(WHITE_COLOR)
                 binding.tvScore.setTypeface(null, Typeface.NORMAL)
             }
-
         }
     }
 
+    // == Lifecycle ==
     @Suppress("UnspecifiedRegisterReceiverFlag")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMain2Binding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // 1) Check permissions and either request them or start the service
         checkPermissionsAndStartServiceIfGranted()
-
-        // 2) Prompt user to enable Samsung’s “Auto record unknown callers”
         promptEnableCallRecording()
 
-        // 3) Register for transcript broadcasts
-        val filter = IntentFilter(ProtecTalkService.ACTION_TRANSCRIPT)
+        // Register receiver for analysis broadcast
+        val transcriptIntentFilter = IntentFilter(ProtecTalkService.BROADCAST_ACTION_TRANSCRIPT_READY)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(transcriptReceiver, filter, RECEIVER_NOT_EXPORTED)
+            registerReceiver(transcriptBroadcastReceiver, transcriptIntentFilter, RECEIVER_NOT_EXPORTED)
         } else {
-            registerReceiver(transcriptReceiver, filter)
+            registerReceiver(transcriptBroadcastReceiver, transcriptIntentFilter)
         }
 
-        // 4) FAB to restart service - now also checks permissions
+        // FAB to manually start service
         binding.fabStart.setOnClickListener {
             if (hasRequiredPermissions()) {
                 startProtecTalkService()
             } else {
-                Snackbar.make(binding.root, "Permissions missing. Please grant them to restart service.", Snackbar.LENGTH_LONG).show()
-                requestPermissions()
+                Snackbar.make(binding.root, PERMISSION_DENIED_SNACKBAR_MESSAGE, Snackbar.LENGTH_LONG).show()
+                requestAllPermissions()
             }
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
-        unregisterReceiver(transcriptReceiver)
+        unregisterReceiver(transcriptBroadcastReceiver)
     }
 
-    private fun hasRequiredPermissions(): Boolean {
-        val phoneStateGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.READ_PHONE_STATE) == PackageManager.PERMISSION_GRANTED
-        val notificationsGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
-        } else {
-            true
-        }
-        val storageGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            ContextCompat.checkSelfPermission(this, Manifest.permission.READ_MEDIA_AUDIO) == PackageManager.PERMISSION_GRANTED
-        } else {
-            ContextCompat.checkSelfPermission(this, Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
-        }
-        val micGranted = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
-
-        return phoneStateGranted && notificationsGranted && storageGranted && micGranted
-    }
-
+    // == Permissions ==
+    /**
+     * Checks required permissions and starts service if all are granted.
+     */
     private fun checkPermissionsAndStartServiceIfGranted() {
-        if (hasRequiredPermissions()) {
-            startProtecTalkService()
-        } else {
-            requestPermissions()
-        }
+        if (hasRequiredPermissions()) startProtecTalkService()
+        else requestAllPermissions()
     }
 
-    private fun startProtecTalkService() {
-        startService(Intent(this, ProtecTalkService::class.java))
-        Snackbar.make(binding.root, "ProtecTalk Service started", Snackbar.LENGTH_SHORT).show()
-    }
-
-    private fun requestPermissions() {
-        val perms = mutableListOf(
-            Manifest.permission.READ_PHONE_STATE
-        )
+    /**
+     * Requests all runtime permissions required for app functionality.
+     */
+    private fun requestAllPermissions() {
+        val requiredPermissions = mutableListOf(Manifest.permission.READ_PHONE_STATE)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            perms += Manifest.permission.POST_NOTIFICATIONS
-            perms += Manifest.permission.READ_MEDIA_AUDIO
+            requiredPermissions += Manifest.permission.POST_NOTIFICATIONS
+            requiredPermissions += Manifest.permission.READ_MEDIA_AUDIO
         } else {
-            perms += Manifest.permission.READ_EXTERNAL_STORAGE
+            requiredPermissions += Manifest.permission.READ_EXTERNAL_STORAGE
         }
-        // Always request microphone permission!
-        perms += Manifest.permission.RECORD_AUDIO
 
-        permLauncher.launch(perms.toTypedArray())
+        requiredPermissions += Manifest.permission.RECORD_AUDIO
+        permissionsLauncher.launch(requiredPermissions.toTypedArray())
     }
 
+    /**
+     * Checks if all required permissions are currently granted.
+     */
+    private fun hasRequiredPermissions(): Boolean {
+        val context = this
+
+        val phoneGranted = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.READ_PHONE_STATE
+        ) == PackageManager.PERMISSION_GRANTED
+
+        val micGranted = ContextCompat.checkSelfPermission(
+            context, Manifest.permission.RECORD_AUDIO
+        ) == PackageManager.PERMISSION_GRANTED
+
+        val notifyGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) ==
+                    PackageManager.PERMISSION_GRANTED
+        } else true
+
+        val storageGranted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_MEDIA_AUDIO) ==
+                    PackageManager.PERMISSION_GRANTED
+        } else {
+            ContextCompat.checkSelfPermission(context, Manifest.permission.READ_EXTERNAL_STORAGE) ==
+                    PackageManager.PERMISSION_GRANTED
+        }
+
+        return phoneGranted && micGranted && notifyGranted && storageGranted
+    }
+
+    /**
+     * Handles permission denial by showing rationale or redirecting to app settings.
+     */
     private fun handlePermissionDenial() {
-        val showRationalePhone = shouldShowRequestPermissionRationale(Manifest.permission.READ_PHONE_STATE)
-        val showRationaleNotifications = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            shouldShowRequestPermissionRationale(Manifest.permission.POST_NOTIFICATIONS)
-        } else {
-            false
-        }
-        val showRationaleStorage = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            shouldShowRequestPermissionRationale(Manifest.permission.READ_MEDIA_AUDIO)
-        } else {
-            shouldShowRequestPermissionRationale(Manifest.permission.READ_EXTERNAL_STORAGE)
-        }
-        val showRationaleMic = shouldShowRequestPermissionRationale(Manifest.permission.RECORD_AUDIO)
-
-        if (showRationalePhone || showRationaleNotifications || showRationaleStorage || showRationaleMic) {
-            requestPermissions()
-        } else {
-            Snackbar.make(
-                binding.root,
-                "Permissions are permanently denied. Please enable them in app settings.",
-                Snackbar.LENGTH_INDEFINITE
-            )
-                .setAction("Settings") {
-                    val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                        data = Uri.fromParts("package", packageName, null)
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                    startActivity(intent)
+        if (!shouldShowRequestPermissionRationale(Manifest.permission.READ_PHONE_STATE)) {
+            showPersistentSnackbar(PERMISSION_SETTINGS_REDIRECT_MESSAGE, "Settings") {
+                val settingsIntent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                    data = Uri.fromParts("package", packageName, null)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                 }
-                .show()
+                startActivity(settingsIntent)
+            }
+        } else {
+            requestAllPermissions()
         }
     }
 
+    // == UI Helpers ==
+    /**
+     * Shows a persistent snackbar with an action button.
+     */
+    private fun showPersistentSnackbar(message: String, actionLabel: String, onClick: () -> Unit) {
+        Snackbar.make(binding.root, message, Snackbar.LENGTH_INDEFINITE)
+            .setAction(actionLabel) { onClick() }
+            .show()
+    }
+
+    /**
+     * Prompts user to enable auto-call recording in system settings.
+     */
     private fun promptEnableCallRecording() {
-        Snackbar.make(
-            binding.root,
-            "Enable Auto-record for unknown callers in Phone → Settings → Record calls",
-            Snackbar.LENGTH_INDEFINITE
-        )
+        Snackbar.make(binding.root, CALL_RECORDING_SETTINGS_MESSAGE, Snackbar.LENGTH_INDEFINITE)
             .setAction("Open Settings") {
-                openSamsungCallRecordingSettings()
+                try {
+                    startActivity(Intent(Intent.ACTION_MAIN).apply {
+                        component = ComponentName(
+                            "com.samsung.android.dialer",
+                            "com.samsung.android.dialer.settings.RecordingSettingsActivity"
+                        )
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    })
+                } catch (_: Exception) {
+                    startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
+                        data = "package:com.samsung.android.dialer".toUri()
+                        flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    })
+                }
             }
             .show()
     }
 
-    private fun openSamsungCallRecordingSettings() {
-        try {
-            val intent = Intent(Intent.ACTION_MAIN).apply {
-                component = ComponentName(
-                    "com.samsung.android.dialer",
-                    "com.samsung.android.dialer.settings.RecordingSettingsActivity",
-                )
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            }
-            startActivity(intent)
-        } catch (e: Exception) {
-            val fallback = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
-                data = "package:com.samsung.android.dialer".toUri()
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
-            }
-            startActivity(fallback)
-        }
+    /**
+     * Starts the ProtecTalk background service.
+     */
+    private fun startProtecTalkService() {
+        startService(Intent(this, ProtecTalkService::class.java))
+        Snackbar.make(binding.root, PERMISSION_GRANTED_SNACKBAR_MESSAGE, Snackbar.LENGTH_SHORT).show()
     }
 }
