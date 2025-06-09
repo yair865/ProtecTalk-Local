@@ -20,6 +20,7 @@ android {
     defaultConfig {
         applicationId = "com.example.protectalk"
         minSdk = 23
+        //noinspection OldTargetApi
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
