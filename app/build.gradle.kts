@@ -2,9 +2,15 @@ import java.util.Properties
 import java.io.FileInputStream
 
 plugins {
-    alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
-    alias(libs.plugins.kotlin.compose)
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
+}
+
+val localProps = Properties().apply {
+    val propsFile = rootProject.file("local.properties")
+    if (propsFile.exists()) {
+        FileInputStream(propsFile).use { load(it) }
+    }
 }
 
 android {
@@ -13,33 +19,30 @@ android {
 
     defaultConfig {
         applicationId = "com.example.protectalk"
-        minSdk = 29
-        targetSdk = 35
+        minSdk = 23
+        //noinspection OldTargetApi
+        targetSdk = 34
         versionCode = 1
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
-        // ─── Load keys from local.properties ───
-        val localPropsFile = rootProject.file("local.properties")
-        val localProps = Properties().apply {
-            if (localPropsFile.exists()) {
-                FileInputStream(localPropsFile).use { load(it) }
-            }
-        }
-        // Hugging Face key for the tiny-spam model
-        val hfKey: String = localProps.getProperty("huggingface_api_key", "")
-        buildConfigField("String", "HF_API_KEY", "\"$hfKey\"")
+        // inject keys from local.properties
+        buildConfigField(
+            "String",
+            "GOOGLE_SPEECH_API_KEY",
+            "\"${localProps.getProperty("google_speech_api_key", "")}\""
+        )
+        buildConfigField(
+            "String",
+            "OPENAI_API_KEY",
+            "\"${localProps.getProperty("openai_api_key", "")}\""
+        )
     }
 
-    buildTypes {
-        release {
-            isMinifyEnabled = false
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
-        }
+    buildFeatures {
+        viewBinding = true
+        buildConfig = true
     }
 
     compileOptions {
@@ -49,34 +52,22 @@ android {
     kotlinOptions {
         jvmTarget = "11"
     }
-
-    buildFeatures {
-        compose      = true
-        buildConfig  = true   // ← ensures BuildConfig.HF_API_KEY & OPENAI_API_KEY are generated
-    }
 }
 
 dependencies {
+    // AndroidX core & UI
     implementation(libs.androidx.core.ktx)
-    implementation(libs.androidx.lifecycle.runtime.ktx)
-    implementation(libs.androidx.activity.compose)
-    implementation(platform(libs.androidx.compose.bom))
-    implementation(libs.androidx.ui)
-    implementation(libs.androidx.ui.graphics)
-    implementation(libs.androidx.ui.tooling.preview)
-    implementation(libs.androidx.material3)
     implementation(libs.androidx.appcompat)
+    implementation(libs.material)
 
-    // HTTP client for Hugging Face calls
+    // HTTP client for Google Speech-to-Text & OpenAI
     implementation(libs.okhttp)
 
-    testImplementation(libs.junit)
+    // Kotlin coroutines for background work
+    implementation(libs.kotlinx.coroutines.android)
 
+    // Testing
+    testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
-    androidTestImplementation(platform(libs.androidx.compose.bom))
-    androidTestImplementation(libs.androidx.ui.test.junit4)
-
-    debugImplementation(libs.androidx.ui.tooling)
-    debugImplementation(libs.androidx.ui.test.manifest)
 }

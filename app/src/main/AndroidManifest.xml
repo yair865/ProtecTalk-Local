@@ -1,34 +1,41 @@
-<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
     package="com.example.protectalk">
 
-    <!-- Permissions -->
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
-    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
-    <uses-permission android:name="android.permission.READ_PHONE_STATE"/>
-    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-feature android:name="android.hardware.telephony" android:required="false" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE"/>
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.START_FOREGROUND_SERVICES_FROM_BACKGROUND"
+        tools:ignore="ProtectedPermissions" />
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
 
     <application
         android:allowBackup="true"
-        android:label="@string/app_name"
         android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@style/Theme.ProtecTalk">
 
-        <!-- Launcher activity -->
         <activity
-            android:name=".activities.MainActivity"
+            android:name="com.example.protectalk.activity.Main2Activity"
             android:exported="true">
             <intent-filter>
-                <action android:name="android.intent.action.MAIN"/>
-                <category android:name="android.intent.category.LAUNCHER"/>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
 
-        <!-- Foreground service for call listening -->
         <service
-            android:name=".services.CallListenerService"
+            android:name="com.example.protectalk.services.ProtecTalkService"
             android:exported="false"
-            android:foregroundServiceType="phoneCall"/>
+            android:foregroundServiceType="microphone"
+            tools:ignore="ForegroundServicePermission" />
     </application>
 </manifest>

@@ -1,0 +1,22 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Red warning triangle -->
+    <path
+        android:fillColor="#FF0000"
+        android:pathData="M1,21h22L12,2 1,21z"/>
+    <!-- White exclamation line -->
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M12,8v4"/>
+    <!-- White exclamation dot (drawn as a path for compatibility) -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M12,17a1,1 0 1,0 0.01,0"/>
+</vector>
