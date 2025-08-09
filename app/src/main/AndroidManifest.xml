@@ -2,6 +2,7 @@
     xmlns:tools="http://schemas.android.com/tools"
     package="com.example.protectalk">
 
+    <!-- Permissions -->
     <uses-feature android:name="android.hardware.telephony" android:required="false" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
@@ -24,7 +25,7 @@
         android:theme="@style/Theme.ProtecTalk">
 
         <activity
-            android:name="com.example.protectalk.activity.Main2Activity"
+            android:name="com.example.protectalk.activity.MainActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -33,7 +34,7 @@
         </activity>
 
         <service
-            android:name="com.example.protectalk.services.ProtecTalkService"
+            android:name=".services.ProtecTalkService"
             android:exported="false"
             android:foregroundServiceType="microphone"
             tools:ignore="ForegroundServicePermission" />
